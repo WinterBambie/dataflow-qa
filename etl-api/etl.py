@@ -1,7 +1,7 @@
-
+import json
 from pathlib import Path
 import pandas as pd
-from sqlalchemy import MetaData, Table
+from sqlalchemy import MetaData, Table, text
 from sqlalchemy.dialects.postgresql import insert
 from database import engine
 
@@ -137,15 +137,123 @@ def load_valid_sales(valid_records: pd.DataFrame) -> int:
 
 
 def run_etl(file_path: str | Path) -> dict:
-    """Valida el CSV y carga las ventas válidas en PostgreSQL."""
-    validation_result = validate_sales_file(file_path)
+    """Valida, carga los datos y registra el resultado de la ejecución."""
+    with engine.begin() as connection:
+        result = connection.execute(
+            text(
+                """
+                INSERT INTO etl_runs (status)
+                VALUES ('running')
+                RETURNING id
+                """
+            )
+        )
+        run_id = result.scalar_one()
 
-    inserted = load_valid_sales(validation_result["valid"])
+    try:
+        validation_result = validate_sales_file(file_path)
 
-    return {
-        "records_read": validation_result["records_read"],
-        "records_processed": inserted,
-        "records_rejected": validation_result["records_rejected"],
-        "rejected": validation_result["rejected"],
-    }
+        inserted = load_valid_sales(validation_result["valid"])
 
+        rejected_saved = save_rejected_records(
+            validation_result["rejected"], run_id,
+        )
+
+        with engine.begin() as connection:
+            connection.execute(
+                text(
+                    """
+                    UPDATE etl_runs
+                    SET finished_at = CURRENT_TIMESTAMP,
+                        status = 'success',
+                        records_read = :records_read,
+                        records_processed = :records_processed,
+                        records_rejected = :records_rejected
+                    WHERE id = :run_id
+                    """
+                ),
+                {
+                    "run_id": run_id,
+                    "records_read": validation_result["records_read"],
+                    "records_processed": inserted,
+                    "records_rejected": validation_result["records_rejected"],
+                },
+            )
+
+        return {
+            "run_id": run_id,
+            "records_read": validation_result["records_read"],
+            "records_processed": inserted,
+            "records_rejected": validation_result["records_rejected"],
+            "rejected_records_saved": rejected_saved,
+            "rejected": validation_result["rejected"],
+        }
+
+    except Exception as error:
+        with engine.begin() as connection:
+            connection.execute(
+                text(
+                    """
+                    UPDATE etl_runs
+                    SET finished_at = CURRENT_TIMESTAMP,
+                        status = 'failed',
+                        error_message = :error_message
+                    WHERE id = :run_id
+                    """
+                ),
+                {
+                    "run_id": run_id,
+                    "error_message": str(error)[:2000],
+                },
+            )
+        raise
+
+
+def save_rejected_records(rejected_records: pd.DataFrame, run_id: int) -> int:
+    """Guarda los registros rechazados y sus motivos en PostgreSQL."""
+    if rejected_records.empty:
+        return 0
+
+    metadata = MetaData()
+    rejected_table = Table(
+        "rejected_records",
+        metadata,
+        autoload_with=engine,
+    )
+
+    records = []
+
+    for _, row in rejected_records.iterrows():
+        raw_record = {
+            column: (
+                value.isoformat()
+                if hasattr(value, "isoformat")
+                else str(value)
+                if not isinstance(value, (str, int, float, bool))
+                else value
+            )
+            for column, value in row.drop(
+                labels=["rejection_reason"]
+            ).items()
+        }
+
+        records.append(
+            {
+                "transaction_id": raw_record.get("transaction_id") or None,
+                "raw_record": json.dumps(raw_record, ensure_ascii=False),
+                "rejection_reason": row["rejection_reason"],
+                "run_id": run_id,
+            }
+        )
+
+
+    statement = (
+        insert(rejected_table)
+        .values(records)
+        .returning(rejected_table.c.id)
+    )
+
+    with engine.begin() as connection:
+        inserted_ids = connection.execute(statement).fetchall()
+
+    return len(inserted_ids)
