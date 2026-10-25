@@ -105,7 +105,7 @@ def validate_sales_file(file_path: str | Path) -> dict:
         "rejected": rejected,
     }
 
-def load_valid_sales(valid_records: pd.DataFrame) -> int:
+def load_valid_sales(valid_records: pd.DataFrame, connection,) -> int:
     """Guarda las ventas válidas y devuelve el número de filas insertadas."""
     if valid_records.empty:
         return 0
@@ -128,8 +128,8 @@ def load_valid_sales(valid_records: pd.DataFrame) -> int:
         .returning(sales_table.c.transaction_id)
     )
 
-    with engine.begin() as connection:
-        inserted_ids = connection.execute(statement).fetchall()
+    
+    inserted_ids = connection.execute(statement).fetchall()
 
     return len(inserted_ids)
 
@@ -150,16 +150,22 @@ def run_etl(file_path: str | Path) -> dict:
         )
         run_id = result.scalar_one()
 
+
     try:
         validation_result = validate_sales_file(file_path)
 
-        inserted = load_valid_sales(validation_result["valid"])
-
-        rejected_saved = save_rejected_records(
-            validation_result["rejected"], run_id,
-        )
-
         with engine.begin() as connection:
+            inserted = load_valid_sales(
+                validation_result["valid"],
+                connection,
+            )
+
+            rejected_saved = save_rejected_records(
+                validation_result["rejected"],
+                run_id,
+                connection,
+            )
+
             connection.execute(
                 text(
                     """
@@ -182,9 +188,11 @@ def run_etl(file_path: str | Path) -> dict:
                 },
             )
 
+
         return {
             "run_id": run_id,
             "records_read": validation_result["records_read"],
+            "records_validated": len(validation_result["valid"]),
             "records_processed": inserted,
             "records_rejected": validation_result["records_rejected"],
             "rejected_records_saved": rejected_saved,
@@ -211,7 +219,7 @@ def run_etl(file_path: str | Path) -> dict:
         raise
 
 
-def save_rejected_records(rejected_records: pd.DataFrame, run_id: int) -> int:
+def save_rejected_records(rejected_records: pd.DataFrame, run_id: int, connection,) -> int:
     """Guarda los registros rechazados y sus motivos en PostgreSQL."""
     if rejected_records.empty:
         return 0
@@ -255,7 +263,7 @@ def save_rejected_records(rejected_records: pd.DataFrame, run_id: int) -> int:
         .returning(rejected_table.c.id)
     )
 
-    with engine.begin() as connection:
-        inserted_ids = connection.execute(statement).fetchall()
+
+    inserted_ids = connection.execute(statement).fetchall()
 
     return len(inserted_ids)
