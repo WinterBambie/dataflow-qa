@@ -167,6 +167,7 @@ def run_etl(file_path: str | Path) -> dict:
                     SET finished_at = CURRENT_TIMESTAMP,
                         status = 'success',
                         records_read = :records_read,
+                        records_validated = :records_validated,
                         records_processed = :records_processed,
                         records_rejected = :records_rejected
                     WHERE id = :run_id
@@ -175,6 +176,7 @@ def run_etl(file_path: str | Path) -> dict:
                 {
                     "run_id": run_id,
                     "records_read": validation_result["records_read"],
+                    "records_validated": len(validation_result["valid"]),
                     "records_processed": inserted,
                     "records_rejected": validation_result["records_rejected"],
                 },
