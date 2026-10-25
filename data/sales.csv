@@ -1,0 +1,10 @@
+
+transaction_id,sale_date,customer_id,product,amount
+TX001,2026-10-20,C001,Laptop,3500.00
+TX002,2026-10-20,C002,Mouse,75.50
+TX003,2026-10-21,C003,Keyboard,120.00
+TX004,2026-10-21,C004,Monitor,950.00
+TX002,2026-10-22,C005,Headphones,180.00
+TX006,fecha_invalida,C006,Webcam,210.00
+TX007,2026-10-22,C007,USB Cable,-15.00
+TX008,2026-10-23,C008,Microphone,250.00
