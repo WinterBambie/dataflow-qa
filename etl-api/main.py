@@ -35,7 +35,11 @@ def database_health_check() -> dict[str, str]:
 
 @app.post("/etl/run", tags=["ETL"])
 def execute_etl() -> dict:
-    file_path = Path("/app/data/sales.csv")
+
+    file_path = Path(app.state.etl_file_path) if hasattr(
+    app.state, "etl_file_path"
+    ) else Path("/app/data/sales.csv")
+
 
     if not file_path.is_file():
         raise HTTPException(
